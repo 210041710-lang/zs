@@ -7,6 +7,8 @@ import { downloadInboundMedia, extractMediaDirective, fileExists, uploadOutbound
 import { buildFileUnderstandingInput, buildVideoUnderstandingInput } from "./media-understanding.js";
 import { MemoryStore } from "./memory.js";
 import { buildMemoryContext, buildMemoryExtractionMessages } from "./memory-prompts.js";
+import { RecentMediaStore } from "./recent-media.js";
+import { RecentTurnsStore } from "./recent-turns.js";
 
 function extractInboundText(message) {
   for (const item of message.item_list || []) {
@@ -24,13 +26,24 @@ function findPrimaryMediaItem(message) {
   return (message.item_list || []).find((item) => [2, 3, 4, 5].includes(item.type));
 }
 
-async function buildModelInput(config, message, text) {
+function isMediaFollowUp(text) {
+  return /(刚才|这个|那张|那条|这个视频|刚才的视频|刚才的图片|这张图|这个文件|那个视频|哪里|哪儿|什么地方|来源|出处)/.test(String(text || ""));
+}
+
+function isContextFollowUp(text) {
+  return /(这里|那里|这个地方|那个地方|刚才那个地方|什么时候去最好|什么时候去|适合什么时候|最佳时间|值不值得去|怎么去|在哪里|几点去)/.test(String(text || ""));
+}
+
+async function buildModelInput(config, message, text, recentMediaStore, accountId) {
   const mediaItem = findPrimaryMediaItem(message);
-  if (!mediaItem) {
-    return { promptText: text, replyOptions: {} };
+  let media = null;
+
+  if (mediaItem) {
+    media = await downloadInboundMedia(config.stateDir, mediaItem);
+  } else if (isMediaFollowUp(text)) {
+    media = await recentMediaStore.latestRelevant(accountId, message.from_user_id, ["image", "video", "file"]);
   }
 
-  const media = await downloadInboundMedia(config.stateDir, mediaItem);
   if (!media) {
     return { promptText: text, replyOptions: {} };
   }
@@ -39,8 +52,11 @@ async function buildModelInput(config, message, text) {
     const buffer = await fs.readFile(media.filePath);
     const imageDataUrl = `data:${media.mimeType};base64,${buffer.toString("base64")}`;
     return {
-      promptText: text || "请描述这张图片，并回答用户与图片相关的问题。",
+      promptText: text
+        ? `请结合这张图片和用户当前追问来回答，不要假装没看到图片。\n\n用户追问：${text}`
+        : "请描述这张图片，并回答用户与图片相关的问题。",
       replyOptions: { imageDataUrl },
+      media,
     };
   }
 
@@ -58,20 +74,40 @@ async function buildModelInput(config, message, text) {
         ? `${text ? `${text}\n\n` : ""}[用户发送了一条语音，转写文本如下]\n${transcript}`
         : `${text ? `${text}\n\n` : ""}[用户发送了一条语音消息，但当前还没有可用转写。请简短说明你已收到语音，但暂时只能处理带转写的语音。]`,
       replyOptions: {},
+      media,
     };
   }
 
   if (media.kind === "file") {
-    return buildFileUnderstandingInput(config, media);
+    const fileInput = await buildFileUnderstandingInput(config, media);
+    return {
+      ...fileInput,
+      promptText: text
+        ? `${fileInput.promptText}\n\n用户当前追问：${text}`
+        : fileInput.promptText,
+      media,
+    };
   }
 
   if (media.kind === "video") {
-    return buildVideoUnderstandingInput(config, media, text);
+    const videoInput = await buildVideoUnderstandingInput(config, media, text);
+    if (!videoInput.replyOptions?.imageDataUrl) {
+      return {
+        promptText: `${text ? `${text}\n\n` : ""}[用户发来一个视频，但当前未能成功提取关键帧预览。请明确告诉用户：你暂时无法可靠读取这条视频画面，建议对方补发视频截图、封面或关键帧。]`,
+        replyOptions: {},
+        media,
+      };
+    }
+    return {
+      ...videoInput,
+      media,
+    };
   }
 
   return {
     promptText: `${text ? `${text}\n\n` : ""}[用户发送了一个${media.kind === "video" ? "视频" : "文件"}，本地文件路径：${media.filePath}]`,
     replyOptions: {},
+    media,
   };
 }
 
@@ -118,6 +154,8 @@ function shouldReply(message, account) {
 
 export async function runBridge(config, store, account) {
   const memoryStore = new MemoryStore(config.stateDir);
+  const recentMediaStore = new RecentMediaStore(config.stateDir);
+  const recentTurnsStore = new RecentTurnsStore(config.stateDir);
   process.stdout.write(`Listening as ${account.accountId}\n`);
 
   while (true) {
@@ -152,13 +190,19 @@ export async function runBridge(config, store, account) {
       let reply;
       let modelInput;
       const recalledMemories = await memoryStore.retrieve(account.accountId, fromUserId, text || "[media]");
-      const extraSystemPrompt = buildMemoryContext(recalledMemories);
+      const lastTurn = await recentTurnsStore.latest(account.accountId, fromUserId);
+      const turnContext = isContextFollowUp(text) && lastTurn
+        ? `以下是上一轮刚聊过的上下文，请优先承接，不要装作不知道“这里”“刚才那个”指什么。\n上一轮用户消息：${lastTurn.userText}\n上一轮助手回复：${lastTurn.assistantText}`
+        : "";
+      const extraSystemPrompt = [buildMemoryContext(recalledMemories), turnContext]
+        .filter(Boolean)
+        .join("\n\n");
       try {
         const generatedImagePath = await maybeGenerateImage(config, text);
         if (generatedImagePath) {
           reply = `给你画好啦，快接住～\nMEDIA:${generatedImagePath}`;
         } else {
-          modelInput = await buildModelInput(config, message, text);
+          modelInput = await buildModelInput(config, message, text, recentMediaStore, account.accountId);
           reply = await generateReply(config, modelInput.promptText, {
             ...modelInput.replyOptions,
             extraSystemPrompt,
@@ -189,6 +233,14 @@ export async function runBridge(config, store, account) {
         await sendTextMessage(config, current, fromUserId, contextToken, reply);
       }
       process.stdout.write(`[bot] ${reply}\n`);
+
+      if (modelInput?.media && ["image", "video", "file", "voice"].includes(modelInput.media.kind)) {
+        await recentMediaStore.add(account.accountId, fromUserId, modelInput.media);
+      }
+      await recentTurnsStore.add(account.accountId, fromUserId, {
+        userText: text || "[media]",
+        assistantText: reply,
+      });
 
       try {
         const memoryCandidates = await extractMemoriesFromConversation(

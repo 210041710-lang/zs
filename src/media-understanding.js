@@ -71,6 +71,7 @@ async function tryQuickLookThumbnail(filePath, outputDir) {
 
 async function tryVideoPoster(filePath, outputPath) {
   try {
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
     await execCommand("/usr/bin/qlmanage", ["-t", "-s", "1200", "-o", path.dirname(outputPath), filePath]);
     const guessed = path.join(path.dirname(outputPath), `${path.basename(filePath)}.png`);
     return guessed;
@@ -119,10 +120,16 @@ export async function buildVideoUnderstandingInput(config, media, userText) {
   const previewDir = path.join(config.stateDir, "media-previews");
   const frameDir = path.join(previewDir, `${path.basename(media.filePath)}-frames`);
   let framePaths = await extractVideoFrames(media.filePath, frameDir);
+  framePaths = framePaths.filter(Boolean);
   if (framePaths.length === 0) {
     const outputPath = path.join(previewDir, `${path.basename(media.filePath)}.png`);
     const posterPath = await tryVideoPoster(media.filePath, outputPath);
     framePaths = posterPath ? [posterPath] : [];
+  }
+  if (framePaths.length === 0) {
+    const fallbackDir = path.join(previewDir, `${path.basename(media.filePath)}-fallback`);
+    const fallbackPoster = await tryQuickLookThumbnail(media.filePath, fallbackDir);
+    framePaths = fallbackPoster ? [fallbackPoster] : [];
   }
 
   let imageDataUrl = null;
