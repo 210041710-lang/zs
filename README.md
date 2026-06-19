@@ -1,97 +1,190 @@
-# Boss直聘客户端自动化招聘
+# 微信 AI 桥接
 
-基于 **RPA + AI** 的全流程自动化招聘系统。团队成员通过 Web 界面输入岗位需求，系统自动完成从职位分析、候选人搜索沟通、简历收集评分到联系方式获取的完整闭环。
+这个项目会登录 ClawBot 的微信通道，持续拉取微信消息，把文本或图片发送给兼容 OpenAI 接口的模型，再把回复发回微信。对最终用户来说，体验上就像是在和一个普通微信联系人聊天。
 
-## 功能特性
+## 功能概览
 
-- **AI 职位分析** — 输入职位名称，AI 自动生成 JD、搜索关键词矩阵和评分标准
-- **智能反检测 RPA** — 通过真实浏览器 Profile + 人类行为模拟绕过 Boss 直聘反爬
-- **自动候选人沟通** — AI 驱动的个性化打招呼和多轮对话
-- **简历 AI 深度评分** — 五维度（技能/经验/学历/项目/综合）自动评分
-- **联系方式自动获取** — 对达标候选人自动跟进索要微信/手机号
-- **Web 管理看板** — 招聘漏斗、候选人列表、简历详情、实时日志
+- 支持微信扫码登录
+- 支持文本聊天
+- 支持图片消息输入，并把图片内容交给支持视觉输入的模型理解
+- 支持文件、视频、语音消息的下载与解密
+- 支持长期记忆，会按微信用户分别保存
+- 支持通过 `MEDIA:/绝对路径/文件` 指令把本地文件上传回微信
 
-## 技术栈
+## 运行要求
 
-| 层次 | 技术 |
-|------|------|
-| 前端 | React 18 + TypeScript + Vite + Tailwind CSS |
-| 后端 | FastAPI + Python 3.11+ |
-| 浏览器自动化 | Playwright + playwright-stealth |
-| AI/LLM | OpenAI 兼容接口 |
-| 数据库 | SQLite + SQLAlchemy |
+- Node.js 22 或更高版本
+- 可用的 OpenAI 兼容接口
+- 对应模型的 API Key
 
-## 快速开始
+## 环境变量
 
-### 1. 安装后端
+你可以在项目根目录创建 `.env` 文件，或者在 shell 里手动导出变量。
+
+最少需要：
 
 ```bash
-cd backend
-pip install -r requirements.txt
-playwright install chromium
-cp .env.example .env  # 编辑填入 LLM API Key
+export OPENAI_API_KEY="你的 API Key"
+export OPENAI_MODEL="你的文本模型"
+export OPENAI_BASE_URL="你的 OpenAI 兼容接口地址"
 ```
 
-### 2. 安装前端
+当前这套项目已经验证过的豆包配置示例：
 
 ```bash
-cd frontend
-npm install
-npm run build
+export OPENAI_API_KEY="ark-..."
+export OPENAI_MODEL="doubao-seed-2-0-pro-260215"
+export OPENAI_VISION_MODEL="doubao-seed-2-0-pro-260215"
+export OPENAI_BASE_URL="https://ark.cn-beijing.volces.com/api/v3"
 ```
 
-### 3. 首次登录 Boss 直聘
+可选变量：
 
 ```bash
-cd backend
-python main.py setup
-# 在弹出的浏览器中登录你的 Boss 直聘招聘者账号
-# 登录完成后按 Ctrl+C
+export OPENAI_VISION_MODEL="支持视觉输入的模型名"
+export OPENAI_IMAGE_MODEL="支持出图的模型名"
+export OPENAI_TRANSCRIPTION_MODEL="whisper-1"
+export OPENAI_SYSTEM_PROMPT="自定义系统提示词"
+export WEIXIN_BASE_URL="https://ilinkai.weixin.qq.com"
+export WEIXIN_LOGIN_BASE_URL="https://ilinkai.weixin.qq.com"
+export WEIXIN_APP_ID="bot"
+export WEIXIN_APP_VERSION="0.1.0"
+export STATE_DIR="./state"
+export WEIXIN_POLL_TIMEOUT_MS="35000"
+export OPENAI_TIMEOUT_MS="120000"
+export ENABLE_VISION_INPUT="true"
+export ENABLE_IMAGE_GENERATION="true"
+export ENABLE_VOICE_TRANSCRIPTION="true"
 ```
 
-### 4. 启动服务
+## 启动方式
+
+首次登录：
 
 ```bash
-cd backend
-python main.py serve
+npm run login
 ```
 
-打开浏览器访问本地服务地址，进入首页后点击「新建任务」开始使用。
+启动桥接：
 
-## 使用流程
+```bash
+npm start
+```
 
-1. **新建任务** — 输入职位名称（如 "Quant Trader"），AI 自动分析
-2. **调整配置** — 预览 JD、编辑关键词、设置每日上限和评分阈值
-3. **一键启动** — 系统全自动在后台运行
-4. **实时监控** — 在看板页面查看招聘漏斗和实时日志
-5. **查看结果** — 在候选人页面查看简历、评分和联系方式
+如果当前没有保存过微信账号，`npm start` 会自动进入扫码登录流程。
 
-## 配置说明
+## 当前能力说明
 
-- 本地敏感配置请仅保存在 `backend/.env`
-- 不要把任何真实密钥、服务地址或账号信息提交到仓库
-- 对外共享项目时，建议只保留 `.env.example` 里的占位符
+### 1. 文本聊天
 
-## 项目结构
+支持，已经可用。
+
+### 2. 图片理解
+
+支持，已经可用。
+
+当前项目会先从微信 CDN 下载图片并做 AES 解密，再把图片内容发给支持视觉输入的模型。
+
+### 3. 语音消息
+
+当前会：
+
+- 下载微信语音文件
+- 解密语音内容
+- 尝试把 `silk` 解码成 `wav`
+
+如果你使用的模型后端提供 OpenAI 兼容的语音转写接口 `/audio/transcriptions`，项目会自动尝试转写。
+
+注意：
+当前你这条豆包 Ark 配置没有开放这个兼容转写端点，所以“自动语音转文字”这部分代码已经接好，但实际还不能完全跑通。
+
+### 4. 图片生成并回微信
+
+代码已经支持通过 OpenAI 兼容的 `images/generations` 接口出图，然后自动上传回微信。
+
+注意：
+这需要你配置一个真正支持出图的模型到 `OPENAI_IMAGE_MODEL`。如果当前模型不支持出图，项目会友好降级提示，而不会把底层接口报错直接发给微信用户。
+
+### 5. 文件和视频
+
+支持下载、解密和进一步理解。
+
+当前策略：
+
+- 文本类文件会优先提取正文文本
+- PDF 会优先走原生 PDF 文本抽取
+- 常见文档会尝试生成预览图
+- 视频会尝试提取多张关键帧预览图
+- 然后把这些内容一起交给支持视觉输入的模型理解
+
+也就是说，现在已经不是“只把文件路径丢给模型”了，而是尽量做真正的文件/视频内容理解。
+
+### 6. 长期记忆
+
+支持，已经可用。
+
+项目会自动从对话中提炼适合长期保存的信息，例如：
+
+- 用户称呼
+- 风格偏好
+- 长期目标
+- 正在做的项目
+- 稳定要求
+
+记忆会按微信用户分别保存，并在后续回复前自动检索注入。
+
+记忆文件位置：
+
+```bash
+./state/memory
+```
+
+## 本地状态目录
+
+所有本地状态默认保存在：
+
+```bash
+./state
+```
+
+这里面通常会包含：
+
+- 微信账号状态
+- 会话同步信息
+- 上下文 token
+- 长期记忆
+- 下载下来的媒体文件
+
+## 媒体回发格式
+
+如果你希望模型把本地文件直接发回微信，需要让模型输出一行单独的：
 
 ```text
-boss-recruiter/
-├── frontend/              # React 前端
-│   └── src/
-│       ├── pages/         # Dashboard, CreateTask, CandidateList, ...
-│       ├── api/           # API 客户端
-│       └── hooks/         # WebSocket Hook
-│
-├── backend/               # Python 后端 + 自动化引擎
-│   ├── analyzer/          # 模块一: 职位分析
-│   ├── rpa/               # 模块二: RPA 浏览器引擎
-│   ├── communicator/      # 模块三+五: 候选人沟通 + 联系方式获取
-│   ├── resume_analysis/   # 模块四: 简历 AI 分析
-│   ├── pipeline/          # 流水线编排器
-│   ├── web/               # FastAPI 路由
-│   └── database/          # SQLAlchemy ORM
+MEDIA:/绝对路径/到/文件.png
 ```
 
-## 免责声明
+例如：
 
-本项目仅供学习和研究用途。请遵守 Boss 直聘的用户协议和相关法律法规。
+```text
+给你做好啦，快接住～
+MEDIA:/Users/yourname/output.png
+```
+
+注意：
+
+- `MEDIA:` 必须单独占一行
+- 必须使用绝对路径
+
+## 已知限制
+
+- 项目必须运行着，微信机器人才能在线回复
+- 电脑断网时，既收不到新微信消息，也调不到模型接口
+- 是否支持图片理解、语音转写、图片生成，最终取决于你接的模型后端和模型能力
+- 当前豆包配置下，图片理解可用，但语音转写兼容端点和出图模型还需要额外开通或替换
+
+## 后续可扩展方向
+
+- 增加“查看记忆 / 删除记忆”命令
+- 增加后台常驻或开机自启
+- 增加更完善的语音转写链路
+- 增加稳定的出图模型配置
