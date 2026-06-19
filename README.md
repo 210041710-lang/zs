@@ -74,7 +74,7 @@ python main.py serve
 
 ## 项目结构
 
-```
+```text
 boss-recruiter/
 ├── frontend/              # React 前端
 │   └── src/

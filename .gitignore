@@ -33,6 +33,11 @@ backend/data/chrome_profile_pw/
 backend/data/logs/
 backend/data/resumes/
 
+# Legacy remote project state
+state/
+openclaw-weixin-2.4.4.tgz
+openclaw-weixin-src/
+
 # IDE
 .vscode/
 .idea/
